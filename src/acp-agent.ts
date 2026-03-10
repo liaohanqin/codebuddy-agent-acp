@@ -59,6 +59,7 @@ import {
   type UserMessage as SDKUserMessage,
   type ModelInfo,
   type SlashCommand,
+  type AskUserQuestionInput,
 } from "@tencent-ai/agent-sdk";
 import { SettingsManager, CODEBUDDY_CONFIG_DIR } from "./settings.js";
 import {
@@ -856,6 +857,74 @@ export class CodeBuddyAcpAgent implements Agent {
         }
       }
 
+      // Handle AskUserQuestion via requestPermission
+      if (toolName === "AskUserQuestion") {
+        const input = toolInput as AskUserQuestionInput;
+        const questions = input?.questions ?? [];
+        const answers: Record<string, string> = {};
+
+        for (const question of questions) {
+          if (question.multiSelect) {
+            // 多选：循环收集，直到用户选择"完成选择"
+            const selected: string[] = [];
+            while (true) {
+              const response = await this.client.requestPermission({
+                options: [
+                  ...question.options.map((opt) => ({
+                    kind: "allow_once" as const,
+                    name: opt.label,
+                    optionId: opt.label,
+                    _meta: { description: opt.description },
+                  })),
+                  { kind: "allow_always" as const, name: "完成选择", optionId: "__done__" },
+                ],
+                sessionId,
+                toolCall: {
+                  toolCallId: options.toolUseID,
+                  rawInput: toolInput,
+                  title: question.question,
+                  kind: "other",
+                },
+              });
+              if (options.signal.aborted || response.outcome?.outcome === "cancelled") {
+                return { behavior: "deny", message: "User cancelled question", interrupt: true };
+              }
+              const chosen = (response.outcome as any)?.optionId;
+              if (chosen === "__done__") break;
+              if (chosen && !selected.includes(chosen)) selected.push(chosen);
+            }
+            answers[question.header] = selected.join(",");
+          } else {
+            // 单选
+            const response = await this.client.requestPermission({
+              options: question.options.map((opt) => ({
+                kind: "allow_once" as const,
+                name: opt.label,
+                optionId: opt.label,
+                _meta: { description: opt.description },
+              })),
+              sessionId,
+              toolCall: {
+                toolCallId: options.toolUseID,
+                rawInput: toolInput,
+                title: question.question,
+                kind: "other",
+              },
+            });
+            if (options.signal.aborted || response.outcome?.outcome === "cancelled") {
+              return { behavior: "deny", message: "User cancelled question", interrupt: true };
+            }
+            const chosen = (response.outcome as any)?.optionId;
+            if (chosen) answers[question.header] = chosen;
+          }
+        }
+
+        return {
+          behavior: "allow",
+          updatedInput: { ...toolInput, answers },
+        };
+      }
+
       // Bypass permissions mode
       if (session.permissionMode === "bypassPermissions") {
         return {
@@ -924,8 +993,8 @@ export class CodeBuddyAcpAgent implements Agent {
       }
     };
 
-    // Disable AskUserQuestion for now (not well supported over ACP)
-    const disallowedTools = ["AskUserQuestion"];
+    // AskUserQuestion is handled via requestPermission in canUseTool
+    const disallowedTools: string[] = [];
 
     // Build SDK options
     const sdkOptions: SDKSessionOptions = {
