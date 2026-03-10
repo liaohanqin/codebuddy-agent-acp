@@ -77,6 +77,7 @@ Settings are loaded from (in order of increasing precedence):
 - Assistant text and thinking output stream incrementally from `content_block_delta` events, with fallback to completed assistant messages when no deltas are available.
 - `tool_use` blocks are still surfaced early during streaming so ACP clients can render tool calls without waiting for the final assistant message.
 - Runtime switching to `dontAsk` is currently handled as an ACP-layer compatibility workaround because the current headless CodeBuddy CLI rejects `set_permission_mode: dontAsk`.
+- The CLI is spawned with the `--acp` flag alongside `--print` to ensure interactive permission prompts remain available. Without `--acp`, the CLI sets `shouldAvoidPermissionPrompts = true` and silently denies any tool that requires user confirmation.
 
 ## Current Status
 
@@ -89,7 +90,8 @@ This is an initial implementation with the following capabilities:
 - Tool call/result mapping for common tools (Bash, Read, Write, Edit, Glob, Grep, etc.)
 - Settings management with hot-reload support
 - Permission mode handling for `default`, `acceptEdits`, `plan`, and `bypassPermissions`, plus ACP-side compatibility handling for runtime `dontAsk` switches
-- Regression tests covering prompt streaming and session mode switching
+- `AskUserQuestion` interaction: single-select and multi-select questions are forwarded to the ACP client via `requestPermission`, and the user's answers are written back into the tool input before the tool executes
+- Regression tests covering prompt streaming, session mode switching, and `AskUserQuestion` interaction (single-select, multi-select, cancel, signal abort)
 
 ### TODO
 

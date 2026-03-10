@@ -1,9 +1,67 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   CodeBuddyAcpAgent,
   streamEventToAcpNotifications,
   toAcpNotifications,
 } from "./src/acp-agent.js";
+
+// ---------------------------------------------------------------------------
+// Helpers for capturing the canUseTool callback via newSession mock
+// ---------------------------------------------------------------------------
+
+/** Mock sdkCreateSession at module level so tests can capture canUseTool */
+vi.mock("@tencent-ai/agent-sdk", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@tencent-ai/agent-sdk")>();
+  return {
+    ...original,
+    unstable_v2_createSession: vi.fn(),
+    unstable_v2_resumeSession: vi.fn(),
+  };
+});
+
+/** Build a minimal mock SDK session returned by sdkCreateSession */
+function makeMockSdkSession(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    connect: vi.fn().mockResolvedValue(undefined),
+    getAvailableModels: vi.fn().mockResolvedValue([]),
+    on: vi.fn(),
+    send: vi.fn().mockResolvedValue(undefined),
+    interrupt: vi.fn().mockResolvedValue(undefined),
+    stream: async function* () {},
+    setPermissionMode: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
+/**
+ * Call agent.unstable_newSession and return the canUseTool callback that was
+ * passed into sdkCreateSession, so individual tests can invoke it directly.
+ */
+async function captureCanUseTool(agent: CodeBuddyAcpAgent): Promise<{
+  canUseTool: (toolName: string, toolInput: unknown, options: any) => Promise<unknown>;
+  sessionId: string;
+}> {
+  const { unstable_v2_createSession: mockCreate } = await import("@tencent-ai/agent-sdk");
+  const mockSdkSession = makeMockSdkSession();
+  (mockCreate as ReturnType<typeof vi.fn>).mockReturnValue(mockSdkSession);
+
+  let capturedOptions: any;
+  (mockCreate as ReturnType<typeof vi.fn>).mockImplementation((opts: any) => {
+    capturedOptions = opts;
+    return mockSdkSession;
+  });
+
+  await agent.newSession({
+    sessionId: "test-session",
+    cwd: process.cwd(),
+    _meta: {},
+  } as any);
+
+  return {
+    canUseTool: capturedOptions.canUseTool,
+    sessionId: "test-session",
+  };
+}
 
 function createPromptSession(sdkSession: any) {
   return {
@@ -369,6 +427,162 @@ describe("streaming edge cases", () => {
         sessionUpdate: "agent_thought_chunk",
         content: { type: "text", text: "world" },
       },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AskUserQuestion interaction tests
+// ---------------------------------------------------------------------------
+
+describe("AskUserQuestion via canUseTool", () => {
+  let agent: CodeBuddyAcpAgent;
+  const defaultOptions = () => ({
+    toolUseID: "tool-use-1",
+    signal: { aborted: false } as AbortSignal,
+  });
+
+  beforeEach(() => {
+    const sessionUpdate = vi.fn().mockResolvedValue(undefined);
+    const requestPermission = vi.fn();
+    const client = { sessionUpdate, requestPermission } as any;
+    const logger = { log: vi.fn(), error: vi.fn() };
+    agent = new CodeBuddyAcpAgent(client, logger);
+  });
+
+  it("single-select: returns allow with selected answer", async () => {
+    const requestPermission = vi.fn().mockResolvedValueOnce({
+      outcome: { outcome: "allow", optionId: "TypeScript" },
+    });
+    (agent as any).client.requestPermission = requestPermission;
+
+    const { canUseTool } = await captureCanUseTool(agent);
+
+    const result = await canUseTool(
+      "AskUserQuestion",
+      {
+        questions: [
+          {
+            question: "Which language?",
+            header: "Language",
+            multiSelect: false,
+            options: [
+              { label: "TypeScript", description: "Use TypeScript" },
+              { label: "JavaScript", description: "Use JavaScript" },
+            ],
+          },
+        ],
+      },
+      defaultOptions()
+    );
+
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(requestPermission.mock.calls[0][0]).toMatchObject({
+      sessionId: expect.any(String),
+      toolCall: { title: "Which language?", kind: "other" },
+    });
+    expect(result).toMatchObject({
+      behavior: "allow",
+      updatedInput: { answers: { Language: "TypeScript" } },
+    });
+  });
+
+  it("multi-select: collects multiple answers until done", async () => {
+    const requestPermission = vi
+      .fn()
+      .mockResolvedValueOnce({ outcome: { outcome: "allow", optionId: "React" } })
+      .mockResolvedValueOnce({ outcome: { outcome: "allow", optionId: "Vue" } })
+      .mockResolvedValueOnce({ outcome: { outcome: "allow", optionId: "__done__" } });
+    (agent as any).client.requestPermission = requestPermission;
+
+    const { canUseTool } = await captureCanUseTool(agent);
+
+    const result = await canUseTool(
+      "AskUserQuestion",
+      {
+        questions: [
+          {
+            question: "Which frameworks?",
+            header: "Frameworks",
+            multiSelect: true,
+            options: [
+              { label: "React", description: "React" },
+              { label: "Vue", description: "Vue" },
+              { label: "Angular", description: "Angular" },
+            ],
+          },
+        ],
+      },
+      defaultOptions()
+    );
+
+    expect(requestPermission).toHaveBeenCalledTimes(3);
+    // Last call should include the "完成选择" option
+    const lastCallOptions = requestPermission.mock.calls[2][0].options;
+    expect(lastCallOptions.some((o: any) => o.optionId === "__done__")).toBe(true);
+
+    expect(result).toMatchObject({
+      behavior: "allow",
+      updatedInput: { answers: { Frameworks: "React,Vue" } },
+    });
+  });
+
+  it("returns deny with interrupt when user cancels single-select", async () => {
+    const requestPermission = vi.fn().mockResolvedValueOnce({
+      outcome: { outcome: "cancelled" },
+    });
+    (agent as any).client.requestPermission = requestPermission;
+
+    const { canUseTool } = await captureCanUseTool(agent);
+
+    const result = await canUseTool(
+      "AskUserQuestion",
+      {
+        questions: [
+          {
+            question: "Confirm?",
+            header: "Confirm",
+            multiSelect: false,
+            options: [{ label: "Yes", description: "yes" }, { label: "No", description: "no" }],
+          },
+        ],
+      },
+      defaultOptions()
+    );
+
+    expect(result).toMatchObject({
+      behavior: "deny",
+      interrupt: true,
+    });
+  });
+
+  it("returns deny with interrupt when signal is aborted during multi-select", async () => {
+    const abortedSignal = { aborted: true } as AbortSignal;
+    const requestPermission = vi.fn().mockResolvedValueOnce({
+      outcome: { outcome: "allow", optionId: "React" },
+    });
+    (agent as any).client.requestPermission = requestPermission;
+
+    const { canUseTool } = await captureCanUseTool(agent);
+
+    const result = await canUseTool(
+      "AskUserQuestion",
+      {
+        questions: [
+          {
+            question: "Which frameworks?",
+            header: "Frameworks",
+            multiSelect: true,
+            options: [{ label: "React", description: "React" }],
+          },
+        ],
+      },
+      { toolUseID: "tool-use-1", signal: abortedSignal }
+    );
+
+    expect(result).toMatchObject({
+      behavior: "deny",
+      interrupt: true,
     });
   });
 });
