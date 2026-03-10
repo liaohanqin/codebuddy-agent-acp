@@ -116,6 +116,7 @@ type Session = {
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
   streamedContentBlockIndexes: Set<number>;
+  toolUseCache: ToolUseCache;
 };
 
 /**
@@ -228,7 +229,6 @@ export async function codebuddyCliPath(): Promise<string> {
 export class CodeBuddyAcpAgent implements Agent {
   sessions: { [key: string]: Session };
   client: AgentSideConnection;
-  toolUseCache: ToolUseCache;
   clientCapabilities?: ClientCapabilities;
   logger: Logger;
   gatewayAuthMeta?: GatewayAuthMeta;
@@ -236,7 +236,6 @@ export class CodeBuddyAcpAgent implements Agent {
   constructor(client: AgentSideConnection, logger?: Logger) {
     this.sessions = {};
     this.client = client;
-    this.toolUseCache = {};
     this.logger = logger ?? console;
   }
 
@@ -432,6 +431,7 @@ export class CodeBuddyAcpAgent implements Agent {
     }
 
     session.streamedContentBlockIndexes.clear();
+    session.toolUseCache = {};
 
     const userMessage = promptToCodeBuddy(params);
     session.promptRunning = true;
@@ -508,7 +508,7 @@ export class CodeBuddyAcpAgent implements Agent {
               for (const notification of streamEventToAcpNotifications(
                 message,
                 params.sessionId,
-                this.toolUseCache,
+                session.toolUseCache,
                 this.client,
                 this.logger,
                 {
@@ -543,7 +543,7 @@ export class CodeBuddyAcpAgent implements Agent {
               content,
               message.message.role,
               params.sessionId,
-              this.toolUseCache,
+              session.toolUseCache,
               this.client,
               this.logger,
               {
@@ -1064,6 +1064,7 @@ export class CodeBuddyAcpAgent implements Agent {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       streamedContentBlockIndexes: new Set(),
+      toolUseCache: {},
     };
 
     return {

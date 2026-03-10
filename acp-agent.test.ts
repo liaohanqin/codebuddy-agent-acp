@@ -23,6 +23,7 @@ function createPromptSession(sdkSession: any) {
     pendingMessages: new Map(),
     nextPendingOrder: 0,
     streamedContentBlockIndexes: new Set<number>(),
+    toolUseCache: {} as any,
   };
 }
 
