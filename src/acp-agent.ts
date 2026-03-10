@@ -491,8 +491,8 @@ export class CodeBuddyAcpAgent implements Agent {
           }
 
           case "stream_event": {
-            // 仅处理非 delta 类型的 stream 事件，以减少碎片化通知
-            // content_block_delta 会由完整的 assistant 消息来处理
+            // 忽略 delta 事件，文本/思考内容统一由完整 assistant 消息发送
+            // 仅保留需要尽早展示的非文本 content_block_start（例如 tool_use）
             const event = message.event;
             if (event?.type !== "content_block_delta" && event?.type !== "message_delta") {
               for (const notification of streamEventToAcpNotifications(
@@ -518,12 +518,7 @@ export class CodeBuddyAcpAgent implements Agent {
               break;
             }
 
-            const content =
-              message.type === "assistant"
-                ? message.message.content.filter(
-                    (item: any) => !["text", "thinking"].includes(item.type)
-                  )
-                : message.message.content;
+            const content = message.message.content;
 
             for (const notification of toAcpNotifications(
               content,
@@ -1292,13 +1287,15 @@ export function toAcpNotifications(
     switch (chunk.type) {
       case "text":
       case "text_delta":
-        update = {
-          sessionUpdate: role === "assistant" ? "agent_message_chunk" : "user_message_chunk",
-          content: {
-            type: "text",
-            text: chunk.text,
-          },
-        };
+        if (chunk.text) {
+          update = {
+            sessionUpdate: role === "assistant" ? "agent_message_chunk" : "user_message_chunk",
+            content: {
+              type: "text",
+              text: chunk.text,
+            },
+          };
+        }
         break;
 
       case "image":
@@ -1315,13 +1312,15 @@ export function toAcpNotifications(
 
       case "thinking":
       case "thinking_delta":
-        update = {
-          sessionUpdate: "agent_thought_chunk",
-          content: {
-            type: "text",
-            text: chunk.thinking,
-          },
-        };
+        if (chunk.thinking) {
+          update = {
+            sessionUpdate: "agent_thought_chunk",
+            content: {
+              type: "text",
+              text: chunk.thinking,
+            },
+          };
+        }
         break;
 
       case "tool_use":
@@ -1497,6 +1496,9 @@ export function streamEventToAcpNotifications(
   const event = message.event;
   switch (event?.type) {
     case "content_block_start":
+      if (event.content_block?.type === "text" || event.content_block?.type === "thinking") {
+        return [];
+      }
       return toAcpNotifications(
         [event.content_block],
         "assistant",
