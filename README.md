@@ -6,6 +6,8 @@ An ACP (Agent Client Protocol) compatible coding agent powered by CodeBuddy Agen
 
 This package provides a bridge between the ACP protocol and CodeBuddy Agent SDK, enabling CodeBuddy to work with ACP-compatible clients like Zed editor.
 
+It currently supports ACP session management, prompt streaming, tool call/result conversion, and permission mode synchronization on top of the CodeBuddy Agent SDK.
+
 ## Installation
 
 ```bash
@@ -70,25 +72,31 @@ Settings are loaded from (in order of increasing precedence):
 3. Local project settings: `<cwd>/.codebuddy/settings.local.json`
 4. Enterprise managed settings: platform-specific path
 
+## Runtime Notes
+
+- Assistant text and thinking output stream incrementally from `content_block_delta` events, with fallback to completed assistant messages when no deltas are available.
+- `tool_use` blocks are still surfaced early during streaming so ACP clients can render tool calls without waiting for the final assistant message.
+- Runtime switching to `dontAsk` is currently handled as an ACP-layer compatibility workaround because the current headless CodeBuddy CLI rejects `set_permission_mode: dontAsk`.
+
 ## Current Status
 
 This is an initial implementation with the following capabilities:
 
 ### Implemented
 
-- ACP protocol handler (initialize, newSession, prompt, cancel)
-- Session management (create, mode switching, model switching)
-- Tool result mapping for common tools (Bash, Read, Write, Edit, Glob, Grep, etc.)
+- ACP protocol handler (initialize, newSession, prompt, cancel, session mode/model updates)
+- Incremental prompt streaming for assistant text/thinking chunks, with fallback to completed assistant messages
+- Tool call/result mapping for common tools (Bash, Read, Write, Edit, Glob, Grep, etc.)
 - Settings management with hot-reload support
-- Permission mode handling (default, acceptEdits, plan, bypassPermissions)
+- Permission mode handling for `default`, `acceptEdits`, `plan`, and `bypassPermissions`, plus ACP-side compatibility handling for runtime `dontAsk` switches
+- Regression tests covering prompt streaming and session mode switching
 
 ### TODO
 
-- Full CodeBuddy SDK integration (currently using mock query)
 - Session history replay
 - Session listing
 - Complete tool result mapping for all tool types
-- Unit tests
+- Full backend synchronization for runtime `dontAsk` once the upstream headless CLI supports it
 
 ## License
 

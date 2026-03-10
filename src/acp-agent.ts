@@ -664,6 +664,12 @@ export class CodeBuddyAcpAgent implements Agent {
         throw new Error("Invalid Mode");
     }
     this.sessions[sessionId].permissionMode = modeId;
+
+    // 底层 CLI 当前会拒绝 dontAsk；ACP 层先保留该模式状态，避免切换时报错。
+    if (modeId === "dontAsk") {
+      return;
+    }
+
     try {
       await this.sessions[sessionId].sdkSession.setPermissionMode(modeId);
     } catch (error) {

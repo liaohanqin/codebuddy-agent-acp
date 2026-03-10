@@ -174,6 +174,52 @@ describe("CodeBuddyAcpAgent.prompt", () => {
   });
 });
 
+describe("session mode handling", () => {
+  it("keeps dontAsk at the ACP layer without calling the SDK permission setter", async () => {
+    const sessionUpdate = vi.fn().mockResolvedValue(undefined);
+    const client = { sessionUpdate } as any;
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const agent = new CodeBuddyAcpAgent(client, logger);
+
+    const sdkSession = {
+      setPermissionMode: vi.fn().mockResolvedValue(undefined),
+    };
+
+    agent.sessions["s1"] = createPromptSession(sdkSession as any);
+
+    const response = await agent.setSessionMode({
+      sessionId: "s1",
+      modeId: "dontAsk",
+    } as any);
+
+    expect(response).toEqual({});
+    expect(agent.sessions["s1"].permissionMode).toBe("dontAsk");
+    expect(sdkSession.setPermissionMode).not.toHaveBeenCalled();
+    expect(agent.sessions["s1"].configOptions).toEqual([]);
+  });
+
+  it("still forwards supported modes to the SDK permission setter", async () => {
+    const sessionUpdate = vi.fn().mockResolvedValue(undefined);
+    const client = { sessionUpdate } as any;
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const agent = new CodeBuddyAcpAgent(client, logger);
+
+    const sdkSession = {
+      setPermissionMode: vi.fn().mockResolvedValue(undefined),
+    };
+
+    agent.sessions["s1"] = createPromptSession(sdkSession as any);
+
+    await agent.setSessionMode({
+      sessionId: "s1",
+      modeId: "plan",
+    } as any);
+
+    expect(agent.sessions["s1"].permissionMode).toBe("plan");
+    expect(sdkSession.setPermissionMode).toHaveBeenCalledWith("plan");
+  });
+});
+
 describe("streaming edge cases", () => {
   it("converts text and thinking delta events into incremental chunks", () => {
     const logger = { log: vi.fn(), error: vi.fn() };
