@@ -1006,10 +1006,6 @@ export class CodeBuddyAcpAgent implements Agent {
       permissionMode,
       canUseTool,
       disallowedTools: [...(userProvidedOptions?.disallowedTools || []), ...disallowedTools],
-      // Pass --acp to the CLI so it does not set shouldAvoidPermissionPrompts=true.
-      // Without this flag, the CLI treats --print mode as non-interactive and denies
-      // any tool that requires a permission prompt.
-      extraArgs: { acp: null },
       env: {
         ...process.env,
         ...userProvidedOptions?.env,
@@ -1046,9 +1042,6 @@ export class CodeBuddyAcpAgent implements Agent {
 
     // Always set the session ID
     sdkOptions.sessionId = sessionId;
-
-    // Always include --acp flag regardless of userProvidedOptions (which may override extraArgs)
-    sdkOptions.extraArgs = { ...sdkOptions.extraArgs, acp: null };
 
     // Create the SDK session
     const sdkSession: SDKSession = creationOpts.resume && !creationOpts.forkSession

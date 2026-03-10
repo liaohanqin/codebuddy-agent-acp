@@ -77,7 +77,7 @@ Settings are loaded from (in order of increasing precedence):
 - Assistant text and thinking output stream incrementally from `content_block_delta` events, with fallback to completed assistant messages when no deltas are available.
 - `tool_use` blocks are still surfaced early during streaming so ACP clients can render tool calls without waiting for the final assistant message.
 - Runtime switching to `dontAsk` is currently handled as an ACP-layer compatibility workaround because the current headless CodeBuddy CLI rejects `set_permission_mode: dontAsk`.
-- The CLI is spawned with the `--acp` flag alongside `--print` to ensure interactive permission prompts remain available. Without `--acp`, the CLI sets `shouldAvoidPermissionPrompts = true` and silently denies any tool that requires user confirmation.
+- The CLI's `AskUserQuestion` tool is enabled via the `capabilities: { askUserQuestion: true }` capability declared during SDK initialization handshake. The tool routes through `can_use_tool` control requests, which are handled by the `canUseTool` callback and forwarded to the ACP client via `requestPermission`, bypassing the `shouldAvoidPermissionPrompts` guard that would otherwise block interactive tools in `--print` mode.
 
 ## Current Status
 
