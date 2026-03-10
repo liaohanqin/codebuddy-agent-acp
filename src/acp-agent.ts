@@ -115,6 +115,7 @@ type Session = {
   promptRunning: boolean;
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
+  streamedContentBlockIndexes: Set<number>;
 };
 
 /**
@@ -430,6 +431,8 @@ export class CodeBuddyAcpAgent implements Agent {
       throw new Error("Concurrent prompts are not supported yet");
     }
 
+    session.streamedContentBlockIndexes.clear();
+
     const userMessage = promptToCodeBuddy(params);
     session.promptRunning = true;
 
@@ -491,10 +494,17 @@ export class CodeBuddyAcpAgent implements Agent {
           }
 
           case "stream_event": {
-            // 忽略 delta 事件，文本/思考内容统一由完整 assistant 消息发送
-            // 仅保留需要尽早展示的非文本 content_block_start（例如 tool_use）
+            // 增量 text/thinking delta 直接发送；完整 assistant 消息仅补充未流式发送的内容
+            // message_delta 仍然忽略，非文本的 content_block_start（例如 tool_use）继续尽早展示
             const event = message.event;
-            if (event?.type !== "content_block_delta" && event?.type !== "message_delta") {
+            if (
+              event?.type === "content_block_delta" &&
+              typeof event.index === "number" &&
+              ["text_delta", "thinking_delta"].includes(event.delta?.type)
+            ) {
+              session.streamedContentBlockIndexes.add(event.index);
+            }
+            if (event?.type !== "message_delta") {
               for (const notification of streamEventToAcpNotifications(
                 message,
                 params.sessionId,
@@ -518,7 +528,16 @@ export class CodeBuddyAcpAgent implements Agent {
               break;
             }
 
-            const content = message.message.content;
+            const content =
+              message.type === "assistant"
+                ? message.message.content.filter(
+                    (item: any, index: number) =>
+                      !(
+                        ["text", "thinking"].includes(item.type) &&
+                        session.streamedContentBlockIndexes.has(index)
+                      )
+                  )
+                : message.message.content;
 
             for (const notification of toAcpNotifications(
               content,
@@ -534,6 +553,9 @@ export class CodeBuddyAcpAgent implements Agent {
               }
             )) {
               await this.client.sessionUpdate(notification);
+            }
+            if (message.type === "assistant") {
+              session.streamedContentBlockIndexes.clear();
             }
             break;
           }
@@ -1035,6 +1057,7 @@ export class CodeBuddyAcpAgent implements Agent {
       promptRunning: false,
       pendingMessages: new Map(),
       nextPendingOrder: 0,
+      streamedContentBlockIndexes: new Set(),
     };
 
     return {
